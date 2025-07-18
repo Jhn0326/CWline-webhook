@@ -1,7 +1,6 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const { google } = require('googleapis');
-const { GoogleAuth } = require('google-auth-library');
 const line = require('@line/bot-sdk');
 const fetch = require('node-fetch');
 const fs = require('fs');
@@ -15,7 +14,7 @@ app.use(bodyParser.json());
 
 const port = process.env.PORT || 3000;
 
-// 📝 Render: 還原 credentials.json
+// 📝 Render: 還原 credentials.json（只給 Google Sheets 用）
 if (process.env.GOOGLE_CREDENTIALS && !fs.existsSync('credentials.json')) {
   console.log('📦 還原 credentials.json...');
   fs.writeFileSync(
@@ -30,13 +29,6 @@ const sheetsAuth = new google.auth.GoogleAuth({
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 const sheets = google.sheets({ version: 'v4', auth: sheetsAuth });
-
-// Gemini 認證
-const geminiAuth = new GoogleAuth({
-  keyFile: 'credentials.json',
-  scopes: 'https://www.googleapis.com/auth/cloud-platform'
-});
-const geminiClient = geminiAuth.getClient();
 
 // LINE SDK 設定
 const lineClient = new line.Client({
@@ -113,14 +105,12 @@ ${text}`;
       console.log("📤 送出給 Gemini 的 Prompt:", prompt);
 
       try {
-        const accessToken = await (await geminiClient).getAccessToken();
         const response = await fetch(
-          'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent',
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${process.env.GEMINI_API_KEY}`,
           {
             method: 'POST',
             headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${accessToken.token}`,
+              'Content-Type': 'application/json'
             },
             body: JSON.stringify({
               contents: [{ parts: [{ text: prompt }] }],
