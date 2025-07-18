@@ -14,7 +14,7 @@ app.use(bodyParser.json());
 
 const port = process.env.PORT || 3000;
 
-// 📝 Render: 還原 credentials.json（只給 Google Sheets 用）
+// 📝 Render: 還原 credentials.json
 if (process.env.GOOGLE_CREDENTIALS && !fs.existsSync('credentials.json')) {
   console.log('📦 還原 credentials.json...');
   fs.writeFileSync(
@@ -93,8 +93,8 @@ async function getDisplayName(source) {
 async function parseCarReport(text, user) {
   const regexes = {
     年份: /2\.\s*年份[:：]?\s*(\d{4}(\.\d{1,2})?)/i,
-    顏色: /3\.\s*顏色[:：]?\s*([\u4e00-\u9fa5A-Za-z\/]+)/i,
-    里程: /4\.\s*里程[:：]?\s*([\d\.]+萬?)/i,
+    顏色: /3\.\s*顏色[:：]?\s*([\u4e00-\u9fa5A-Za-z\/]+)\s*/i,
+    里程: /4\.\s*里程[:：]?\s*([\d\.]+)萬?/i,
     書價: /5\.\s*新車[:：]?\s*([\d\.]+)/i,
     權威: /6\.\s*權威[:：]?\s*([\d\.]+)/i,
     案件來源: /7\.\s*業務等級[:：]?\s*(.+)/i,
@@ -116,19 +116,36 @@ async function parseCarReport(text, user) {
 
   // 自動解析
   result.年份 = text.match(regexes.年份)?.[1] || '';
-  result.顏色 = text.match(regexes.顏色)?.[1] || '';
-  result.里程 = text.match(regexes.里程)?.[1] || '';
+  result.顏色 = text.match(regexes.顏色)?.[1].trim() || '';
+  result.里程 = text.match(regexes.里程)?.[1].trim() || '';
   result.書價 = text.match(regexes.書價)?.[1] || '';
-
-  // 抓案件來源
   const level = text.match(regexes.案件來源)?.[1] || '';
   result.案件來源 = map案件來源(level, text);
 
   // 嘗試抓第一行的車名
   const firstLine = text.split('\n')[0];
-  const carParts = firstLine.split(/\s+/);
-  result.廠牌 = carParts[0] || '';
-  result.車型 = carParts.slice(1).join(' ') || '';
+  const carName = firstLine.trim();
+
+  // 用 Ninja API 查廠牌/車型
+  try {
+    const apiRes = await fetch(`https://api.api-ninjas.com/v1/cars?model=${encodeURIComponent(carName)}`, {
+      headers: { 'X-Api-Key': process.env.NINJA_API_KEY },
+    });
+    const apiData = await apiRes.json();
+    if (apiData.length > 0) {
+      result.廠牌 = apiData[0].make;
+      result.車型 = apiData[0].model;
+      console.log(`✅ Ninja API 補上廠牌: ${result.廠牌}, 車型: ${result.車型}`);
+    } else {
+      console.log('⚠️ Ninja API 查無結果，使用原始車名');
+      result.廠牌 = carName.split(' ')[0] || '';
+      result.車型 = carName.split(' ').slice(1).join(' ') || '';
+    }
+  } catch (err) {
+    console.error('❌ Ninja API 失敗:', err.message);
+    result.廠牌 = carName.split(' ')[0] || '';
+    result.車型 = carName.split(' ').slice(1).join(' ') || '';
+  }
 
   return Object.values(result);
 }
