@@ -7,6 +7,9 @@ const fetch = require('node-fetch');
 const fs = require('fs');
 require('dotenv').config();
 
+// 🩹 修正 LINE Token 多餘空格
+process.env.LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN.trim();
+
 const app = express();
 app.use(bodyParser.json());
 
@@ -102,7 +105,11 @@ app.post('/webhook', async (req, res) => {
       }
 
       // 其他業務 → Gemini 解析 & 寫入 Google Sheets
-      const prompt = `請將以下報車訊息解析成表格資料，欄位順序為：負責業務、案件狀態、案件來源、年份、品牌、車型、顏色、里程、書價、核價。\n\n訊息：${text}`;
+      const prompt = `請將以下報車訊息解析成表格資料，每一欄用「Tab」分隔，欄位順序為：
+負責業務、案件狀態、案件來源、年份、品牌、車型、顏色、里程、書價、核價。
+
+訊息：
+${text}`;
       console.log("📤 送出給 Gemini 的 Prompt:", prompt);
 
       try {
@@ -122,6 +129,8 @@ app.post('/webhook', async (req, res) => {
         );
 
         const data = await response.json();
+        console.log("📥 Gemini API 原始回傳:", JSON.stringify(data, null, 2));
+
         const parsedData = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
         console.log("📥 Gemini 回傳資料:", parsedData);
 
