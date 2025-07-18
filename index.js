@@ -69,6 +69,64 @@ async function getDisplayName(source) {
   }
 }
 
+// 解析報車訊息
+async function parseCarReport(text, user) {
+  const regexes = {
+    年份: /2\.\s*年份[:：]?\s*(\d{4}(\.\d{1,2})?)/i,
+    顏色: /3\.\s*顏色[:：]?\s*([\u4e00-\u9fa5A-Za-z\/]+)/i,
+    里程: /4\.\s*里程[:：]?\s*([\d\.]+萬?)/i,
+    書價: /5\.\s*新車[:：]?\s*([\d\.]+)/i,
+    權威: /6\.\s*權威[:：]?\s*([\d\.]+)/i,
+    案件來源: /7\.\s*業務等級[:：]?\s*(.+)/i,
+  };
+
+  let result = {
+    負責業務: user,
+    案件狀態: '',
+    案件來源: '',
+    年份: '',
+    廠牌: '',
+    車型: '',
+    顏色: '',
+    里程: '',
+    書價: '',
+    核價: '',
+    出價: '',
+  };
+
+  // 嘗試自動解析
+  result.年份 = text.match(regexes.年份)?.[1] || '';
+  result.顏色 = text.match(regexes.顏色)?.[1] || '';
+  result.里程 = text.match(regexes.里程)?.[1] || '';
+  result.書價 = text.match(regexes.書價)?.[1] || '';
+  result.案件來源 = text.match(regexes.案件來源)?.[1] || '';
+
+  // 嘗試抓第一行的車名
+  const firstLine = text.split('\n')[0];
+  const carParts = firstLine.split(/\s+/);
+  result.廠牌 = carParts[0] || '';
+  result.車型 = carParts.slice(1).join(' ') || '';
+
+  // 如果廠牌空 → 查 API
+  if (!result.廠牌) {
+    console.log('🔍 廠牌缺失，自動查詢 API...');
+    try {
+      const apiRes = await fetch(`https://api.api-ninjas.com/v1/cars?model=${encodeURIComponent(result.車型)}`, {
+        headers: { 'X-Api-Key': process.env.NINJA_API_KEY },
+      });
+      const apiData = await apiRes.json();
+      if (apiData.length > 0) {
+        result.廠牌 = apiData[0].make;
+        console.log(`✅ API 補上廠牌: ${result.廠牌}`);
+      }
+    } catch (err) {
+      console.error('❌ 查詢廠牌 API 失敗:', err.message);
+    }
+  }
+
+  return Object.values(result);
+}
+
 app.post('/webhook', async (req, res) => {
   const events = req.body.events || [];
   for (const event of events) {
@@ -96,51 +154,18 @@ app.post('/webhook', async (req, res) => {
         continue;
       }
 
-      // 其他業務 → Gemini 解析 & 寫入 Google Sheets
-      const prompt = `請將以下報車訊息解析成表格資料，每一欄用「Tab」分隔，欄位順序為：
-負責業務、案件狀態、案件來源、年份、品牌、車型、顏色、里程、書價、核價。
+      // 其他業務 → 程式解析 + 補廠牌 + 寫入 Sheets
+      const parsedRow = await parseCarReport(text, displayName);
+      const today = new Date().toISOString().split('T')[0];
+      const row = [today, ...parsedRow];
 
-訊息：
-${text}`;
-      console.log("📤 送出給 Gemini 的 Prompt:", prompt);
-
-      try {
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=${process.env.GEMINI_API_KEY}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: prompt }] }],
-            }),
-          }
-        );
-
-        const data = await response.json();
-        console.log("📥 Gemini API 原始回傳:", JSON.stringify(data, null, 2));
-
-        const parsedData = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        console.log("📥 Gemini 回傳資料:", parsedData);
-
-        const parsed = parsedData.split('\t');
-        const today = new Date().toISOString().split('T')[0];
-
-        const row = [
-          today, parsed[0] || '', parsed[1] || '', parsed[2] || '',
-          parsed[3] || '', parsed[4] || '', parsed[5] || '', parsed[6] || '',
-          parsed[7] || '', parsed[8] || '', '', '' // K(核價)=空, L(出價)=空
-        ];
-
-        await sheets.spreadsheets.values.append({
-          spreadsheetId: process.env.SPREADSHEET_ID,
-          range: `${process.env.SHEET_NAME}!A1`,
-          valueInputOption: 'USER_ENTERED',
-          resource: { values: [row] }
-        });
-        console.log('✅ 新增一筆資料至 Google Sheets:', row);
-      } catch (err) {
-        console.error('❌ Gemini API 錯誤:', err.response?.data || err.message);
-      }
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: process.env.SPREADSHEET_ID,
+        range: `${process.env.SHEET_NAME}!A1`,
+        valueInputOption: 'USER_ENTERED',
+        resource: { values: [row] }
+      });
+      console.log('✅ 新增一筆資料至 Google Sheets:', row);
     }
   }
   res.sendStatus(200);
