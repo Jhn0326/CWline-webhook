@@ -50,6 +50,26 @@ const userMap = {
   'JHN_WU': 'JHN_WU',
 };
 
+// 案件來源對應邏輯
+function map案件來源(level, text) {
+  const carBrands = ['Benz', 'BMW', 'Toyota', 'Lexus', 'Audi', 'Volkswagen', 'Ford', 'Honda', 'Nissan', 'Mazda'];
+  const hasCarBrand = carBrands.some(brand => text.includes(brand));
+
+  if (level.includes('買')) {
+    return '同業';
+  } else if (level.includes('中和BMW銷售經理') && hasCarBrand) {
+    return '新車業務';
+  } else if (level.includes('直客')) {
+    return '直客';
+  } else if (level.includes('貸款')) {
+    return '貸款';
+  } else if (level.includes('租賃')) {
+    return '租賃';
+  } else {
+    return level; // 保留原文字
+  }
+}
+
 // 取得使用者名稱
 async function getDisplayName(source) {
   try {
@@ -94,35 +114,21 @@ async function parseCarReport(text, user) {
     出價: '',
   };
 
-  // 嘗試自動解析
+  // 自動解析
   result.年份 = text.match(regexes.年份)?.[1] || '';
   result.顏色 = text.match(regexes.顏色)?.[1] || '';
   result.里程 = text.match(regexes.里程)?.[1] || '';
   result.書價 = text.match(regexes.書價)?.[1] || '';
-  result.案件來源 = text.match(regexes.案件來源)?.[1] || '';
+
+  // 抓案件來源
+  const level = text.match(regexes.案件來源)?.[1] || '';
+  result.案件來源 = map案件來源(level, text);
 
   // 嘗試抓第一行的車名
   const firstLine = text.split('\n')[0];
   const carParts = firstLine.split(/\s+/);
   result.廠牌 = carParts[0] || '';
   result.車型 = carParts.slice(1).join(' ') || '';
-
-  // 如果廠牌空 → 查 API
-  if (!result.廠牌) {
-    console.log('🔍 廠牌缺失，自動查詢 API...');
-    try {
-      const apiRes = await fetch(`https://api.api-ninjas.com/v1/cars?model=${encodeURIComponent(result.車型)}`, {
-        headers: { 'X-Api-Key': process.env.NINJA_API_KEY },
-      });
-      const apiData = await apiRes.json();
-      if (apiData.length > 0) {
-        result.廠牌 = apiData[0].make;
-        console.log(`✅ API 補上廠牌: ${result.廠牌}`);
-      }
-    } catch (err) {
-      console.error('❌ 查詢廠牌 API 失敗:', err.message);
-    }
-  }
 
   return Object.values(result);
 }
@@ -154,7 +160,7 @@ app.post('/webhook', async (req, res) => {
         continue;
       }
 
-      // 其他業務 → 程式解析 + 補廠牌 + 寫入 Sheets
+      // 其他業務 → 程式解析 + 寫入 Sheets
       const parsedRow = await parseCarReport(text, displayName);
       const today = new Date().toISOString().split('T')[0];
       const row = [today, ...parsedRow];
