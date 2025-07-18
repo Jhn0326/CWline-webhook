@@ -12,7 +12,7 @@ app.use(bodyParser.json());
 
 const port = process.env.PORT || 3000;
 
-// 📝 Render: 還原 credentials.json（Base64 環境變數）
+// 📝 Render: 還原 credentials.json
 if (process.env.GOOGLE_CREDENTIALS && !fs.existsSync('credentials.json')) {
   console.log('📦 還原 credentials.json...');
   fs.writeFileSync(
@@ -28,7 +28,7 @@ const sheetsAuth = new google.auth.GoogleAuth({
 });
 const sheets = google.sheets({ version: 'v4', auth: sheetsAuth });
 
-// Gemini 認證（也用 credentials.json）
+// Gemini 認證
 const geminiAuth = new GoogleAuth({
   keyFile: 'credentials.json',
   scopes: 'https://www.googleapis.com/auth/cloud-platform'
@@ -51,7 +51,7 @@ const userMap = {
   '蘇永健Gavin🦅': '阿健',
   '謝庠澤jack': 'Jack',
   '高弘杰': '小高',
-  '郭頌鑫': '核價專員',
+  '郭頌鑫': '郭頌鑫',
   'JHN_WU': 'JHN_WU',
 };
 
@@ -78,12 +78,13 @@ app.post('/webhook', async (req, res) => {
   const events = req.body.events || [];
   for (const event of events) {
     if (event.type === 'message' && event.message.type === 'text') {
-      const text = event.message.text;
+      const text = event.message.text.trim();
       const displayName = userMap[await getDisplayName(event.source)] || '未知';
 
       console.log(`📥 收到訊息: "${text}" 來自: ${displayName}`);
 
-      if (displayName === '核價專員') {
+      // 👤 郭頌鑫更新「核價」
+      if (displayName === '郭頌鑫') {
         const price = parseFloat(text);
         if (!isNaN(price)) {
           const lastRow = await getLastRow();
@@ -93,12 +94,16 @@ app.post('/webhook', async (req, res) => {
             valueInputOption: 'USER_ENTERED',
             resource: { values: [[price]] }
           });
-          console.log(`✅ 更新核價欄位: ${price}`);
+          console.log(`✅ 更新上一筆核價欄位為: ${price}`);
+        } else {
+          console.log('⚠️ 郭頌鑫傳送的不是純數字，略過更新核價');
         }
         continue;
       }
 
-      const prompt = `請將以下報車訊息解析成表格資料，欄位順序為：負責業務、案件狀態、案件來源、年份、品牌、車型、顏色、里程、書價、核價、出價。\n\n訊息：${text}`;
+      // 其他業務 → Gemini 解析 & 寫入 Google Sheets
+      const prompt = `請將以下報車訊息解析成表格資料，欄位順序為：負責業務、案件狀態、案件來源、年份、品牌、車型、顏色、里程、書價、核價。\n\n訊息：${text}`;
+      console.log("📤 送出給 Gemini 的 Prompt:", prompt);
 
       try {
         const accessToken = await (await geminiClient).getAccessToken();
@@ -118,13 +123,16 @@ app.post('/webhook', async (req, res) => {
 
         const data = await response.json();
         const parsedData = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        const row = parsedData.split('\t');
+        console.log("📥 Gemini 回傳資料:", parsedData);
 
-        // 附加來源資訊
-        const sourceInfo = event.source.type === 'group'
-          ? `群組:${event.source.groupId}`
-          : '私聊';
-        row.push(sourceInfo);
+        const parsed = parsedData.split('\t');
+        const today = new Date().toISOString().split('T')[0];
+
+        const row = [
+          today, parsed[0] || '', parsed[1] || '', parsed[2] || '',
+          parsed[3] || '', parsed[4] || '', parsed[5] || '', parsed[6] || '',
+          parsed[7] || '', parsed[8] || '', '', '' // K(核價)=空, L(出價)=空
+        ];
 
         await sheets.spreadsheets.values.append({
           spreadsheetId: process.env.SPREADSHEET_ID,
@@ -132,7 +140,7 @@ app.post('/webhook', async (req, res) => {
           valueInputOption: 'USER_ENTERED',
           resource: { values: [row] }
         });
-        console.log('✅ 已寫入 Google Sheet:', row);
+        console.log('✅ 新增一筆資料至 Google Sheets:', row);
       } catch (err) {
         console.error('❌ Gemini API 錯誤:', err.response?.data || err.message);
       }
