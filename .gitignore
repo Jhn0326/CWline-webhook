@@ -1,5 +1,4 @@
-# 隱私檔案
 .env
 credentials.json
-
-.env.sample copy
+cwlinebot-71e08a50a13e.json
+node_modules/
