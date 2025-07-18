@@ -1,0 +1,6 @@
+git add .env.sample
+git commit -m "📦 新增安全版 .env.sample（佔位符）"
+git push origin m# 隱私檔案
+.env
+credentials.json
+.env.sample

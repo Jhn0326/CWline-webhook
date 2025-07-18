@@ -1,4 +1,5 @@
 # 隱私檔案
 .env
 credentials.json
-.env.sample
+
+.env.sample copy
