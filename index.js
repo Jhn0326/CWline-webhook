@@ -3,7 +3,8 @@ const bodyParser = require('body-parser');
 const { google } = require('googleapis');
 const { GoogleAuth } = require('google-auth-library');
 const line = require('@line/bot-sdk');
-const fetch = require('node-fetch'); // 如果沒有請先 npm install node-fetch
+const fetch = require('node-fetch');
+const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
@@ -11,8 +12,14 @@ app.use(bodyParser.json());
 
 const port = process.env.PORT || 3000;
 
-const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
-const SHEET_NAME = process.env.SHEET_NAME;
+// 📝 Render: 還原 credentials.json（Base64 環境變數）
+if (process.env.GOOGLE_CREDENTIALS && !fs.existsSync('credentials.json')) {
+  console.log('📦 還原 credentials.json...');
+  fs.writeFileSync(
+    'credentials.json',
+    Buffer.from(process.env.GOOGLE_CREDENTIALS, 'base64')
+  );
+}
 
 // Google Sheets 認證
 const sheetsAuth = new google.auth.GoogleAuth({
@@ -21,9 +28,9 @@ const sheetsAuth = new google.auth.GoogleAuth({
 });
 const sheets = google.sheets({ version: 'v4', auth: sheetsAuth });
 
-// Gemini 認證
+// Gemini 認證（也用 credentials.json）
 const geminiAuth = new GoogleAuth({
-  keyFile: 'cwlinebot-71e08a50a13e.json',
+  keyFile: 'credentials.json',
   scopes: 'https://www.googleapis.com/auth/cloud-platform'
 });
 const geminiClient = geminiAuth.getClient();
@@ -81,8 +88,8 @@ app.post('/webhook', async (req, res) => {
         if (!isNaN(price)) {
           const lastRow = await getLastRow();
           await sheets.spreadsheets.values.update({
-            spreadsheetId: SPREADSHEET_ID,
-            range: `${SHEET_NAME}!K${lastRow}`,
+            spreadsheetId: process.env.SPREADSHEET_ID,
+            range: `${process.env.SHEET_NAME}!K${lastRow}`,
             valueInputOption: 'USER_ENTERED',
             resource: { values: [[price]] }
           });
@@ -113,15 +120,15 @@ app.post('/webhook', async (req, res) => {
         const parsedData = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
         const row = parsedData.split('\t');
 
-        // 附加來源資訊：群組/私聊
+        // 附加來源資訊
         const sourceInfo = event.source.type === 'group'
           ? `群組:${event.source.groupId}`
           : '私聊';
         row.push(sourceInfo);
 
         await sheets.spreadsheets.values.append({
-          spreadsheetId: SPREADSHEET_ID,
-          range: `${SHEET_NAME}!A1`,
+          spreadsheetId: process.env.SPREADSHEET_ID,
+          range: `${process.env.SHEET_NAME}!A1`,
           valueInputOption: 'USER_ENTERED',
           resource: { values: [row] }
         });
@@ -144,8 +151,8 @@ app.listen(port, () => {
 
 async function getLastRow() {
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A:A`
+    spreadsheetId: process.env.SPREADSHEET_ID,
+    range: `${process.env.SHEET_NAME}!A:A`
   });
   return res.data.values.length + 1;
 }
